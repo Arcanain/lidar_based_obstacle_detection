@@ -1,0 +1,8 @@
+lidar_based_obstacle_detection:
+  ros__parameters:
+    frame_id: "laser"
+    threshold: 1.0
+    min_threshold: 0.3
+    forward_angle_min: -0.785398
+    forward_angle_max: 0.785398
+    num_points: 30
