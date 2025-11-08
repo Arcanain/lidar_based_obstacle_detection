@@ -16,12 +16,19 @@ namespace lidar_based_obstacle_detection {
         num_points_ = static_cast<size_t>(this->declare_parameter<int>("num_points", 30));
         this->declare_parameter("frame_id", "laser");
 
+        this->declare_parameter<int>("downsample_rate", 5);
+
         this->get_parameter("threshold", threshold_);
         this->get_parameter("min_threshold", min_threshold_);
         this->get_parameter("forward_angle_min", forward_angle_min_);
         this->get_parameter("forward_angle_max", forward_angle_max_);
         this->get_parameter("num_points", num_points_);
         this->get_parameter("frame_id", frame_id_);
+
+        this->get_parameter("downsample_rate", downsample_rate_);
+
+        
+
         RCLCPP_INFO(this->get_logger(), "Using frame_id: %s", frame_id_.c_str());
 
         subscription_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
@@ -35,27 +42,49 @@ namespace lidar_based_obstacle_detection {
 
     void LidarBasedObstacleDetection::filter_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
     {
+        // --- 追加パラメータ ---
+        this->get_parameter("downsample_rate", downsample_rate_);
+        int downsample_rate = downsample_rate_;
         auto filtered_msg = *msg;
+    
+        // rangesを間引く
+        std::vector<float> downsampled_ranges;
+        downsampled_ranges.reserve(msg->ranges.size() / downsample_rate);
+    
+        float new_angle_min = msg->angle_min;
+        float new_angle_increment = msg->angle_increment * downsample_rate;
+    
+        for (size_t i = 0; i < msg->ranges.size(); i += downsample_rate)
+        {
+            downsampled_ranges.push_back(msg->ranges[i]);
+        }
+    
+        // downsampled_rangesをfiltered_msgに反映
+        filtered_msg.ranges = downsampled_ranges;
+        filtered_msg.angle_min = new_angle_min;
+        filtered_msg.angle_increment = new_angle_increment;
+        filtered_msg.angle_max = new_angle_min + (downsampled_ranges.size() - 1) * new_angle_increment;
+    
+        // ---- 以下、元の処理をそのまま利用 ----
         float closest_distance = std::numeric_limits<float>::infinity();
         float closest_x = 0.0;
         float closest_y = 0.0;
-
         bool obstacle_detected = false;
-
-        for (size_t i = 0; i < msg->ranges.size(); ++i)
+    
+        for (size_t i = 0; i < filtered_msg.ranges.size(); ++i)
         {
-            float angle = msg->angle_min + i * msg->angle_increment;
-            float range = msg->ranges[i];
-
+            float angle = filtered_msg.angle_min + i * filtered_msg.angle_increment;
+            float range = filtered_msg.ranges[i];
+    
             if (std::isnan(range) || range <= 0.0) {
                 filtered_msg.ranges[i] = std::numeric_limits<float>::infinity();
                 continue;
             }
-
+    
             float x = range * std::cos(angle);
             float y = range * std::sin(angle);
             float distance = std::hypot(x, y);
-
+    
             if (distance < min_threshold_ || distance > threshold_ ||
                 angle < forward_angle_min_ || angle > forward_angle_max_)
             {
@@ -182,6 +211,7 @@ namespace lidar_based_obstacle_detection {
     double forward_angle_min_;
     double forward_angle_max_;
     int num_points_;
+    int downsample_rate_;
     std::string frame_id_;
 
 }  // namespace lidar_based_obstacle_detection
