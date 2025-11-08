@@ -32,6 +32,7 @@ private:
     float forward_angle_min_;
     float forward_angle_max_;
     int num_points_;
+    int downsample_rate_;
     std::string frame_id_;
 
 };
