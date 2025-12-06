@@ -16,9 +16,11 @@ public:
 
 private:
     void filter_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
-    void createFOVMarker(visualization_msgs::msg::Marker &marker, float angle_min, float angle_max,
-                         float min_threshold, float threshold, size_t num_points,
-                         const std::string &frame_id, const std_msgs::msg::ColorRGBA &color);
+    void createFOVMarker(visualization_msgs::msg::Marker &marker,
+        float forward_min_x, float forward_max_x,
+        float lateral_half_width,
+        const std::string &frame_id,
+        const std_msgs::msg::ColorRGBA &color);
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subscription_;
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr publisher_;
@@ -31,6 +33,9 @@ private:
     float min_threshold_;
     float forward_angle_min_;
     float forward_angle_max_;
+    double forward_min_x_;
+    double forward_max_x_;
+    double lateral_half_width_;
     int num_points_;
     int downsample_rate_;
     std::string frame_id_;

@@ -8,29 +8,37 @@ namespace lidar_based_obstacle_detection {
     LidarBasedObstacleDetection::LidarBasedObstacleDetection(const rclcpp::NodeOptions & options)
     : Node("lidar_based_obstacle_detection", options)
     {
-        //デフォルト値がないと動かない
+        // 既存
         this->declare_parameter<double>("threshold", 1.0);
         this->declare_parameter<double>("min_threshold", 0.3);
-        this->declare_parameter<double>("forward_angle_min", -0.785398); // -π/4
-        forward_angle_max_ = this->declare_parameter<double>("forward_angle_max", 0.785398);  // π/4
+        this->declare_parameter<double>("forward_angle_min", -0.785398); // もう使わない予定
+        forward_angle_max_ = this->declare_parameter<double>("forward_angle_max", 0.785398);
         num_points_ = static_cast<size_t>(this->declare_parameter<int>("num_points", 30));
         this->declare_parameter("frame_id", "laser");
-
         this->declare_parameter<int>("downsample_rate", 5);
-
+    
+        // ★ 追加: 長方形領域のパラメータ（デフォルト: 前方0.3〜1.0m, 横±0.5m）
+        this->declare_parameter<double>("forward_min_x", 0.3);
+        this->declare_parameter<double>("forward_max_x", 1.0);
+        this->declare_parameter<double>("lateral_half_width", 0.5);
+    
+        // get_parameter
         this->get_parameter("threshold", threshold_);
         this->get_parameter("min_threshold", min_threshold_);
         this->get_parameter("forward_angle_min", forward_angle_min_);
         this->get_parameter("forward_angle_max", forward_angle_max_);
         this->get_parameter("num_points", num_points_);
         this->get_parameter("frame_id", frame_id_);
-
         this->get_parameter("downsample_rate", downsample_rate_);
-
-        
-
+    
+        // ★ 追加: 長方形パラメータの取得
+        this->get_parameter("forward_min_x", forward_min_x_);
+        this->get_parameter("forward_max_x", forward_max_x_);
+        this->get_parameter("lateral_half_width", lateral_half_width_);
+    
         RCLCPP_INFO(this->get_logger(), "Using frame_id: %s", frame_id_.c_str());
-
+    
+        // ★ ここから下は全部コンストラクタの中！
         subscription_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
             "/scan", 10, std::bind(&LidarBasedObstacleDetection::filter_callback, this, _1));
         publisher_ = this->create_publisher<sensor_msgs::msg::LaserScan>("/filtered_scan", 10);
@@ -38,7 +46,7 @@ namespace lidar_based_obstacle_detection {
         closest_point_publisher_ = this->create_publisher<geometry_msgs::msg::Point>("/closest_point", 10);
         fov_marker_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>("/fov_marker", 10);
         obstacle_detected_pub = this->create_publisher<std_msgs::msg::Bool>("obstacle_detected", 10);
-    }
+    }    
 
     void LidarBasedObstacleDetection::filter_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
     {
@@ -75,23 +83,26 @@ namespace lidar_based_obstacle_detection {
         {
             float angle = filtered_msg.angle_min + i * filtered_msg.angle_increment;
             float range = filtered_msg.ranges[i];
-    
-            if (std::isnan(range) || range <= 0.0) {
+        
+            if (std::isnan(range) || range <= 0.0f) {
                 filtered_msg.ranges[i] = std::numeric_limits<float>::infinity();
                 continue;
             }
-    
+        
             float x = range * std::cos(angle);
             float y = range * std::sin(angle);
             float distance = std::hypot(x, y);
-    
-            if (distance < min_threshold_ || distance > threshold_ ||
-                angle < forward_angle_min_ || angle > forward_angle_max_)
+        
+            // ★ ここを「長方形判定」に変更
+            // 前方 0.3〜1.0 m, 横 ±0.5 m をデフォルトとした長方形
+            if (x < forward_min_x_ || x > forward_max_x_ || std::fabs(y) > lateral_half_width_)
             {
+                // 長方形外 → 無視
                 filtered_msg.ranges[i] = std::numeric_limits<float>::infinity();
             }
             else
             {
+                // 長方形内 → 障害物候補
                 if (distance < closest_distance)
                 {
                     closest_distance = distance;
@@ -100,7 +111,7 @@ namespace lidar_based_obstacle_detection {
                 }
                 obstacle_detected = true;
             }
-        }
+        }        
 
         // 最も近い点の可視化マーカー
         visualization_msgs::msg::MarkerArray marker_array;
@@ -152,51 +163,44 @@ namespace lidar_based_obstacle_detection {
         green.a = 0.5; green.r = 0.0; green.g = 1.0; green.b = 1.0;
 
         visualization_msgs::msg::Marker fov_marker;
-        createFOVMarker(fov_marker, forward_angle_min_, forward_angle_max_,
-                        min_threshold_, threshold_, num_points_, frame_id_, green);
-        fov_marker.ns = "fov"; fov_marker.id = 1;
-        fov_marker_publisher_->publish(fov_marker);
+        createFOVMarker(fov_marker,
+                        forward_min_x_, forward_max_x_,
+                        lateral_half_width_,
+                        frame_id_, green);
+        fov_marker.ns = "fov";
+        fov_marker.id = 1;
+        fov_marker_publisher_->publish(fov_marker);        
 
         publisher_->publish(filtered_msg);
     }
 
-    void LidarBasedObstacleDetection::createFOVMarker(visualization_msgs::msg::Marker &marker, float angle_min, float angle_max,
-        float min_radius, float max_radius, size_t num_points,
-        const std::string &frame_id, const std_msgs::msg::ColorRGBA &color)
+    void LidarBasedObstacleDetection::createFOVMarker(
+        visualization_msgs::msg::Marker &marker,
+        float forward_min_x, float forward_max_x,
+        float lateral_half_width,
+        const std::string &frame_id,
+        const std_msgs::msg::ColorRGBA &color)
     {
         marker.header.frame_id = frame_id;
         marker.header.stamp = this->get_clock()->now();
-        marker.type = visualization_msgs::msg::Marker::TRIANGLE_LIST;
+        marker.type = visualization_msgs::msg::Marker::CUBE;
         marker.action = visualization_msgs::msg::Marker::ADD;
-        marker.pose.orientation.w = 1.0;
-        marker.scale.x = marker.scale.y = marker.scale.z = 1.0;
+    
+        // 長方形の中心位置
+        marker.pose.position.x = (forward_min_x + forward_max_x) * 0.5f;
+        marker.pose.position.y = 0.0f;
+        marker.pose.position.z = 0.0f;
+        marker.pose.orientation.w = 1.0f;
+    
+        // 長方形のサイズ
+        marker.scale.x = forward_max_x - forward_min_x;      // 前後長さ (例: 1.0 - 0.3 = 0.7m)
+        marker.scale.y = 2.0f * lateral_half_width;          // 横幅 (例: 2 * 0.5 = 1.0m)
+        marker.scale.z = 0.01f;                              // 薄い板にしておく
+    
         marker.color = color;
-
-        std::vector<geometry_msgs::msg::Point> inner, outer;
-        float step = (angle_max - angle_min) / num_points;
-
-        for (size_t i = 0; i <= num_points; ++i)
-        {
-            float a = angle_min + i * step;
-
-            geometry_msgs::msg::Point p1, p2;
-            p1.x = min_radius * std::cos(a); p1.y = min_radius * std::sin(a);
-            p2.x = max_radius * std::cos(a); p2.y = max_radius * std::sin(a);
-            p1.z = p2.z = 0.0;
-            inner.push_back(p1);
-            outer.push_back(p2);
-        }
-
-        for (size_t i = 0; i < num_points; ++i)
-        {
-            marker.points.push_back(inner[i]);
-            marker.points.push_back(outer[i]);
-            marker.points.push_back(inner[i+1]);
-
-            marker.points.push_back(inner[i+1]);
-            marker.points.push_back(outer[i]);
-            marker.points.push_back(outer[i+1]);
-        }
+    
+        // TRIANGLE_LIST 用の points は不要なので、念のためクリア
+        marker.points.clear();
     }
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subscription_;
