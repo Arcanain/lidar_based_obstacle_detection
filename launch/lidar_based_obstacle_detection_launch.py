@@ -46,7 +46,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        sllidar_launch,
         obstacle_node,
         #rviz_node
     ])
