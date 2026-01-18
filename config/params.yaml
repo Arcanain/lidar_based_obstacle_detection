@@ -8,5 +8,5 @@ lidar_based_obstacle_detection:
     frame_id: "laser"
     downsample_rate: 30   # ← ここで点群の間引き率を指定（例：5なら1/5）
     forward_min_x: 0.3       # 前方最短距離
-    forward_max_x: 1.5       # 前方最長距離
-    lateral_half_width: 0.4  # 左右 ±0.5m
+    forward_max_x: 3.0       # 前方最長距離
+    lateral_half_width: 0.5  # 左右 ±0.5m
